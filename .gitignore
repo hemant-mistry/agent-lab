@@ -1,1 +1,4 @@
 agent-lab-frontend/node_modules/*
+agent-lab-backend/venv/*
+__pycache__/
+agent-lab-backend/.env
