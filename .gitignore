@@ -1,4 +1,5 @@
 agent-lab-frontend/node_modules/*
+creds.txt
 agent-lab-backend/venv/*
 __pycache__/
 agent-lab-backend/.env
