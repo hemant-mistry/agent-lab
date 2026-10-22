@@ -1,8 +1,7 @@
 export interface Step {
   step_number: number;
-  type: "user" | "tool_call" | "tool_result" | "final_answer" | string;
+  type: string;
   title: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   content: any; 
 }
 
@@ -12,4 +11,13 @@ export interface RunResult {
   final_answer: string;
   steps: Step[];
   latency_ms: number;
+}
+
+// Add this new interface
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant" | "error";
+  content: string;
+  steps?: Step[];
+  latency_ms?: number;
 }

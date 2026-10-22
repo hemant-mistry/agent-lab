@@ -23,16 +23,16 @@ async def execute_sql(query: str) -> str:
 tools = [get_schema, execute_sql]
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash",
+    model="gemini-3.5-flash",
     api_key=settings.GOOGLE_API_KEY
 )
 
 system_message = SystemMessage(content=(
-    "You are an AI data assistant for NexusWorks, an enterprise company. "
+    "You are an AI data assistant for NexusWorks. "
     "You have access to a PostgreSQL database. "
-    "If you do not know the exact table names or relationships, ALWAYS call get_schema first. "
-    "Do not guess table names. "
-    "Always use execute_sql to answer data-related questions."
+    "CRITICAL RULE: You MUST call 'get_schema' as your very first step on every request before writing any SQL. "
+    "Never guess or assume column names (such as 'status' or 'id'). "
+    "If 'execute_sql' returns an error, read the error message, check the schema, and run a corrected SQL query."
 ))
 
 agent_executor = create_agent(
