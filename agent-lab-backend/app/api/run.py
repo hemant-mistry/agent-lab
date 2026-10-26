@@ -2,7 +2,7 @@ import time
 import traceback
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Any
+from typing import List, Any, Optional, Dict
 from app.experiments.langchain_v1.agent import run_langchain_agent
 
 router = APIRouter()
@@ -10,6 +10,7 @@ router = APIRouter()
 class RunRequest(BaseModel):
     experiment_id: str
     query: str
+    session_id: str = "default-session"
 
 class Step(BaseModel):
     step_number: int
@@ -23,6 +24,7 @@ class RunResponse(BaseModel):
     final_answer: str
     steps: List[Step]
     latency_ms: float
+    telemetry: Optional[Dict[str, int]] = None
 
 @router.post("/runs", response_model=RunResponse)
 async def execute_run(req: RunRequest):
@@ -36,13 +38,11 @@ async def execute_run(req: RunRequest):
     
     try:
         # 1. Execute Agent
-        state = await run_langchain_agent(req.query)
+        state = await run_langchain_agent(user_query=req.query, session_id=req.session_id)
         
         # 2. Safely extract messages
         messages = state.get("messages", [])
-        if not isinstance(messages, list):
-            messages = [messages]
-
+        telemetry = state.get("telemetry", None)
         latency_ms = round((time.time() - start_time) * 1000, 2)
         
         # 3. Parse execution trace safely
@@ -89,7 +89,8 @@ async def execute_run(req: RunRequest):
             query=req.query,
             final_answer=final_answer,
             steps=steps,
-            latency_ms=latency_ms
+            latency_ms=latency_ms,
+            telemetry=telemetry
         )
 
     except Exception as e:
