@@ -1,12 +1,13 @@
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage, AIMessage
 from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_tool_call
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, field_validator
 from langgraph.checkpoint.memory import InMemorySaver
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Literal
 from app.core.config import settings
 from app.tools.schema_tool import SchemaTool
 from app.tools.sql_tool import SQLTool
@@ -14,6 +15,26 @@ from app.tools.sql_tool import SQLTool
 schema_tool_instance = SchemaTool()
 sql_tool_instance = SQLTool()
 
+
+class IntentClassification(BaseModel):
+    intent: Literal["sql_data_request", "general_chat", "off_topic"] = Field(
+        description="Classify the user's intent into one of the exact literal categories."
+    )
+    confidence: float = Field(
+        description="Confidence score between 0.0 and 1.0"
+    )
+
+ # Fast LCEL Classifier Chain
+classifier_prompt = ChatPromptTemplate.from_messages([
+    ("system", 
+     "You are an intent classifier for the NexusWorks database agent.\n"
+     "Categories:\n"
+     "- 'sql_data_request': Any question about projects, spend, customers, status, or data analysis.\n"
+     "- 'general_chat': Greetings, pleasantries (e.g., 'hello', 'how are you', 'who are you').\n"
+     "- 'off_topic': Unrelated questions (e.g., recipes, history, general coding unrelated to the DB)."
+    ),
+    ("human", "{query}")
+])   
 
 # ARGS - acts like guardrails
 class SQLQueryInput(BaseModel):
@@ -75,13 +96,25 @@ llm = ChatGoogleGenerativeAI(
     api_key=settings.GOOGLE_API_KEY
 )
 
-system_message = SystemMessage(content=(
-    "You are an AI data assistant for NexusWorks. "
-    "You have access to a PostgreSQL database. "
-    "CRITICAL RULE: You MUST call 'get_schema' as your very first step on every request before writing any SQL. "
-    "Never guess or assume column names (such as 'status' or 'id'). "
-    "If 'execute_sql' returns an error, read the error message, check the schema, and run a corrected SQL query."
-))
+system_message = SystemMessage(
+    content=(
+        "You are an enterprise AI data analyst for NexusWorks.\n"
+        "You have access to a PostgreSQL database.\n"
+        "CRITICAL RULES:\n"
+        "1. If you have not yet inspected the schema in this thread, call 'get_schema' first before calling 'execute_sql'.\n"
+        "2. Never guess table or column names.\n"
+        "3. If 'execute_sql' returns an error, read it, check the schema, and run a corrected query."
+    )
+)
+
+# Attach structured output to our classifier chain
+intent_chain = classifier_prompt | llm.with_structured_output(IntentClassification)
+
+fast_chat_chain = ChatPromptTemplate.from_template(
+    "You are AgentLab, a helpful database assistant for NexusWorks. "
+    "Respond warmly and briefly to this user message: {query}"
+) | llm
+
 
 memory_checkpointer = InMemorySaver()
 
@@ -93,15 +126,47 @@ agent_executor = create_agent(
     checkpointer=memory_checkpointer
 )
 
+
+def extract_tokens(message: Any) -> Dict[str, int]:
+    """Helper to extract token counts from an AIMessage."""
+    usage = getattr(message, "usage_metadata", None)
+    if usage and isinstance(usage, dict):
+        return {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        }
+    return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
 async def run_langchain_agent(
     user_query: str,
     session_id: str = "default-session",
 ) -> Dict[str, Any]:
-    config = {
-        "configurable": {"thread_id": session_id},
-    }
+    
+    # --- ROUTING PHASE ---
+    # 1. Classify the user's intent using our LCEL structured output chain
+    classification: IntentClassification = await intent_chain.ainvoke({"query": user_query})
+    
+    # 2. Handle Off-Topic (Zero-shot static rejection, extremely fast and cheap)
+    if classification.intent == "off_topic":
+        blocked_msg = AIMessage(content="I am a specialized data agent for NexusWorks. I can only assist with database queries, project metrics, and financial reporting. How can I help you with your data today?")
+        return {
+            "messages": [blocked_msg],
+            "telemetry": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        }
+        
+    # 3. Handle General Chat (Fast LCEL LLM pipe, no tool overhead)
+    elif classification.intent == "general_chat":
+        chat_response: AIMessage = await fast_chat_chain.ainvoke({"query": user_query})
+        return {
+            "messages": [chat_response],
+            "telemetry": extract_tokens(chat_response)
+        }
 
-    # Inspect prior thread state to isolate new messages generated this turn
+    # --- SQL AGENT PHASE ---
+    # 4. Handle SQL Data Requests (Full agent loop)
+    config = {"configurable": {"thread_id": session_id}}
+
     prior_state = await agent_executor.aget_state(config)
     prior_messages = prior_state.values.get("messages", []) if prior_state and prior_state.values else []
     prior_count = len(prior_messages)
@@ -111,26 +176,21 @@ async def run_langchain_agent(
         config=config,
     )
 
-    all_messages = final_state.get("messages", [])
-    new_messages = all_messages[prior_count:]
+    new_messages = final_state.get("messages", [])[prior_count:]
 
-    # Extract token usage metadata natively from response messages if available
-    input_tokens = 0
-    output_tokens = 0
-    total_tokens = 0
-
+    # Aggregate telemetry for the multi-step loop
+    t_in, t_out, t_tot = 0, 0, 0
     for msg in new_messages:
-        usage = getattr(msg, "usage_metadata", None)
-        if usage and isinstance(usage, dict):
-            input_tokens += usage.get("input_tokens", 0)
-            output_tokens += usage.get("output_tokens", 0)
-            total_tokens += usage.get("total_tokens", 0)
+        tokens = extract_tokens(msg)
+        t_in += tokens["input_tokens"]
+        t_out += tokens["output_tokens"]
+        t_tot += tokens["total_tokens"]
 
     return {
         "messages": new_messages,
         "telemetry": {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": total_tokens,
+            "input_tokens": t_in,
+            "output_tokens": t_out,
+            "total_tokens": t_tot,
         },
     }
