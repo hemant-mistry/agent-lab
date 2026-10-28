@@ -11,53 +11,25 @@ from typing import Any, Callable, Dict, Literal
 from app.core.config import settings
 from app.tools.schema_tool import SchemaTool
 from app.tools.sql_tool import SQLTool
+from app.models.langchain_v1.schema import SQLQueryInput, IntentClassification
+from app.models.langchain_v1.schema import RouteQuery
 
 schema_tool_instance = SchemaTool()
 sql_tool_instance = SQLTool()
 
 
-class IntentClassification(BaseModel):
-    intent: Literal["sql_data_request", "general_chat", "off_topic"] = Field(
-        description="Classify the user's intent into one of the exact literal categories."
-    )
-    confidence: float = Field(
-        description="Confidence score between 0.0 and 1.0"
-    )
-
- # Fast LCEL Classifier Chain
-classifier_prompt = ChatPromptTemplate.from_messages([
+router_prompt = ChatPromptTemplate.from_messages([
     ("system", 
-     "You are an intent classifier for the NexusWorks database agent.\n"
-     "Categories:\n"
-     "- 'sql_data_request': Any question about projects, spend, customers, status, or data analysis.\n"
-     "- 'general_chat': Greetings, pleasantries (e.g., 'hello', 'how are you', 'who are you').\n"
-     "- 'off_topic': Unrelated questions (e.g., recipes, history, general coding unrelated to the DB)."
+     "You are a strict intent classification router for a database AI. "
+     "You MUST accurately classify the user's intent based on these rules:\n"
+     "- 'general_chat': The user is making small talk, saying hello, or asking how you are (e.g., 'hey', 'hi', 'hello').\n"
+     "- 'off_topic': The user is asking for general knowledge, coding help, or anything unrelated to the database.\n"
+     "- 'sql_data_request': The user is specifically asking for data, metrics, projects, invoices, or database analysis.\n\n"
+     "CRITICAL: If the user just says 'hey' or 'hello', you MUST classify it as 'general_chat'."
     ),
     ("human", "{query}")
-])   
+])
 
-# ARGS - acts like guardrails
-class SQLQueryInput(BaseModel):
-    query: str = Field(
-        description= "A valid, read-only PostgreSQL SELECT query to run against NexusWorks"
-    )
-
-    @field_validator("query")
-    @classmethod
-    def validate_readonly_select(cls, v:str) -> str:
-        cleaned = v.strip().rstrip(";").strip()
-        if not cleaned.lower().startswith("select"):
-            raise ValueError("Guardrail Error: Only read-only SELECT queries are permitted.")
-
-
-        forbidden = {"drop", "delete", "update", "insert", "alter", "truncate"}
-        tokens = set(cleaned.lower().split())
-        if tokens.intersection(forbidden):
-            raise ValueError(
-                f"Guardrail Error: Query contains forbidden keywords: {tokens.intersection(forbidden)}"
-            )
-        return cleaned
-    
 @tool
 async def get_schema() -> str:
     """Returns the NexusWorks database schema, including tables, columns and relationships."""
@@ -108,7 +80,7 @@ system_message = SystemMessage(
 )
 
 # Attach structured output to our classifier chain
-intent_chain = classifier_prompt | llm.with_structured_output(IntentClassification)
+classifier_chain = router_prompt | llm.with_structured_output(RouteQuery, include_raw=True)
 
 fast_chat_chain = ChatPromptTemplate.from_template(
     "You are AgentLab, a helpful database assistant for NexusWorks. "
@@ -141,30 +113,53 @@ def extract_tokens(message: Any) -> Dict[str, int]:
 async def run_langchain_agent(
     user_query: str,
     session_id: str = "default-session",
+    use_router: bool = True,
 ) -> Dict[str, Any]:
-    
-    # --- ROUTING PHASE ---
-    # 1. Classify the user's intent using our LCEL structured output chain
-    classification: IntentClassification = await intent_chain.ainvoke({"query": user_query})
-    
-    # 2. Handle Off-Topic (Zero-shot static rejection, extremely fast and cheap)
-    if classification.intent == "off_topic":
-        blocked_msg = AIMessage(content="I am a specialized data agent for NexusWorks. I can only assist with database queries, project metrics, and financial reporting. How can I help you with your data today?")
-        return {
-            "messages": [blocked_msg],
-            "telemetry": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-        }
-        
-    # 3. Handle General Chat (Fast LCEL LLM pipe, no tool overhead)
-    elif classification.intent == "general_chat":
-        chat_response: AIMessage = await fast_chat_chain.ainvoke({"query": user_query})
-        return {
-            "messages": [chat_response],
-            "telemetry": extract_tokens(chat_response)
-        }
 
-    # --- SQL AGENT PHASE ---
-    # 4. Handle SQL Data Requests (Full agent loop)
+    if use_router:
+        try:
+            result = await classifier_chain.ainvoke({"query": user_query})
+            classification = result.get("parsed")
+            raw_msg = result.get("raw")
+            
+            r_usage = getattr(raw_msg, "usage_metadata", {}) or {}
+            r_in = r_usage.get("input_tokens", 0)
+            r_out = r_usage.get("output_tokens", 0)
+            r_total = r_usage.get("total_tokens", 0)
+
+            if classification:
+                print(f"[LCEL Router] Intent: {classification.intent} | Reasoning: {classification.reasoning}")
+
+                # Format the router's thought process for the UI
+                router_trace_step = {
+                    "type": "tool_call",
+                    "title": "LCEL Semantic Router",
+                    "content": {
+                        "action": "bypassed_heavy_agent_loop",
+                        "intent": classification.intent,
+                        "reasoning": classification.reasoning
+                    }
+                }
+
+                if classification.intent == "off_topic":
+                    msg = AIMessage(content="I can only assist with NexusWorks database queries, projects, and invoices. How can I help you with your data today?")
+                    return {
+                        "messages": [msg],
+                        "steps": [router_trace_step],
+                        "telemetry": {"input_tokens": r_in, "output_tokens": r_out, "total_tokens": r_total},
+                    }
+
+                if classification.intent == "general_chat":
+                    msg = AIMessage(content="Hello! I'm the NexusWorks data agent. I'm here to help you query your database and analyze projects. What would you like to know?")
+                    return {
+                        "messages": [msg],
+                        "steps": [router_trace_step],
+                        "telemetry": {"input_tokens": r_in, "output_tokens": r_out, "total_tokens": r_total},
+                    }
+        except Exception as e:
+            print(f"[LCEL Router Error] Falling back to heavy agent. Error: {e}")
+
+
     config = {"configurable": {"thread_id": session_id}}
 
     prior_state = await agent_executor.aget_state(config)
@@ -176,21 +171,25 @@ async def run_langchain_agent(
         config=config,
     )
 
-    new_messages = final_state.get("messages", [])[prior_count:]
+    all_messages = final_state.get("messages", [])
+    new_messages = all_messages[prior_count:]
 
-    # Aggregate telemetry for the multi-step loop
-    t_in, t_out, t_tot = 0, 0, 0
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+
     for msg in new_messages:
-        tokens = extract_tokens(msg)
-        t_in += tokens["input_tokens"]
-        t_out += tokens["output_tokens"]
-        t_tot += tokens["total_tokens"]
+        usage = getattr(msg, "usage_metadata", None)
+        if usage and isinstance(usage, dict):
+            input_tokens += usage.get("input_tokens", 0)
+            output_tokens += usage.get("output_tokens", 0)
+            total_tokens += usage.get("total_tokens", 0)
 
     return {
         "messages": new_messages,
         "telemetry": {
-            "input_tokens": t_in,
-            "output_tokens": t_out,
-            "total_tokens": t_tot,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
         },
     }

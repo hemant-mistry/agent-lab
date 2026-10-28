@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Bot, Code2, Sparkles, TerminalSquare } from "lucide-react";
+import { Send, Bot, Code2, Sparkles, TerminalSquare, Network } from "lucide-react";
 import { EXPERIMENTS } from "../config/experiments";
 import { AgentAPI } from "../services/api";
 import type { ChatMessage } from "../features/workspace/types";
@@ -16,6 +16,8 @@ export default function Workspace() {
   const [input, setInput] = useState("");
   const [experimentId, setExperimentId] = useState(EXPERIMENTS[0]?.id || "");
   const [isLoading, setIsLoading] = useState(false);
+  const [useRouter, setUseRouter] = useState(true);
+  const [sessionId] = useState(() => `session-${Date.now()}`);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -40,7 +42,7 @@ export default function Workspace() {
     setIsLoading(true);
 
     try {
-      const data = await AgentAPI.executeRun(experimentId, userQuery);
+      const data = await AgentAPI.executeRun(experimentId, userQuery, sessionId, useRouter);
       
       const botMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -48,6 +50,7 @@ export default function Workspace() {
         content: data.final_answer,
         steps: data.steps,
         latency_ms: data.latency_ms,
+        telemetry: data.telemetry,
       };
       
       setMessages((prev) => [...prev, botMsg]);
@@ -85,23 +88,41 @@ export default function Workspace() {
           </div>
         </div>
         
-        <div className="flex items-center gap-3 bg-zinc-900/50 p-1.5 rounded-lg border border-white/5">
-          <label className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider pl-2">Engine</label>
-          <select
-            value={experimentId}
-            onChange={(e) => setExperimentId(e.target.value)}
-            className="h-7 rounded-md border-none bg-zinc-800 px-3 py-0.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-600 cursor-pointer"
-          >
-            {EXPERIMENTS.map((exp) => (
-              <option key={exp.id} value={exp.id} disabled={exp.disabled}>
-                {exp.name}
-              </option>
-            ))}
-          </select>
+        <div className="flex items-center gap-6">
+          
+          {/* LCEL Router Toggle */}
+          <div className="flex items-center gap-2 bg-zinc-900/50 p-1.5 px-3 rounded-lg border border-white/5 shadow-inner">
+            <Network size={14} className={useRouter ? "text-emerald-400" : "text-zinc-500"} />
+            <label className="text-[11px] font-medium text-zinc-300 uppercase tracking-wider cursor-pointer select-none" onClick={() => setUseRouter(!useRouter)}>
+              LCEL Router
+            </label>
+            <button 
+              type="button"
+              onClick={() => setUseRouter(!useRouter)}
+              className={`relative inline-flex h-4 w-7 ml-1 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/10 transition-colors duration-200 ease-in-out focus:outline-none ${useRouter ? 'bg-emerald-500/80' : 'bg-zinc-700'}`}
+            >
+              <span className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${useRouter ? 'translate-x-1.5' : '-translate-x-1.5'}`} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3 bg-zinc-900/50 p-1.5 rounded-lg border border-white/5">
+            <label className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider pl-2">Engine</label>
+            <select
+              value={experimentId}
+              onChange={(e) => setExperimentId(e.target.value)}
+              className="h-7 rounded-md border-none bg-zinc-800 px-3 py-0.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-600 cursor-pointer"
+            >
+              {EXPERIMENTS.map((exp) => (
+                <option key={exp.id} value={exp.id} disabled={exp.disabled}>
+                  {exp.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </header>
 
-      {/* CHAT THREAD: Added custom dark scrollbar classes (replace with 'no-scrollbar' to hide completely) */}
+      {/* CHAT THREAD */}
       <MessageScrollerProvider autoScroll>
         <MessageScroller className="flex-1 px-4 md:px-8 pt-8 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-zinc-800 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-zinc-700">
           
@@ -131,14 +152,14 @@ export default function Workspace() {
                 >
                   <div className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     
-                    {/* USER TURN (Right) */}
+                    {/* USER TURN */}
                     {msg.role === "user" ? (
                       <div className="max-w-[85%] md:max-w-[75%] bg-zinc-100 text-zinc-900 shadow-sm shadow-black/20 font-medium text-[15px] px-5 py-3 rounded-2xl rounded-tr-sm break-words">
                         {msg.content}
                       </div>
                     ) : (
                       
-                      /* AGENT TURN (Left) */
+                      /* AGENT TURN */
                       <div className="flex flex-col gap-2 w-full max-w-[95%] md:max-w-[85%]">
                         <div className="flex items-center gap-3 mb-1">
                            <div className="h-7 w-7 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shadow-inner">
@@ -158,9 +179,24 @@ export default function Workspace() {
                           {msg.content}
                         </div>
 
+                        {/* Telemetry Display */}
+                        {msg.telemetry && (
+                          <div className="ml-10 mt-1 flex flex-wrap items-center gap-2">
+                             <span className="text-[11px] font-mono text-indigo-400/80 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 shadow-sm">
+                               In: {msg.telemetry.input_tokens}
+                             </span>
+                             <span className="text-[11px] font-mono text-pink-400/80 bg-pink-500/10 px-2 py-0.5 rounded border border-pink-500/20 shadow-sm">
+                               Out: {msg.telemetry.output_tokens}
+                             </span>
+                             <span className="text-[11px] font-mono text-emerald-400/80 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 shadow-sm">
+                               Total Tokens: {msg.telemetry.total_tokens}
+                             </span>
+                          </div>
+                        )}
+
                         {/* Execution Trace */}
                         {msg.steps && msg.steps.length > 0 && (
-                          <details className="mt-4 ml-10 text-xs bg-[#0c0c0e] border border-white/10 rounded-xl overflow-hidden group shadow-lg">
+                          <details className="mt-3 ml-10 text-xs bg-[#0c0c0e] border border-white/10 rounded-xl overflow-hidden group shadow-lg">
                             <summary className="flex items-center gap-2 p-3 text-zinc-400 font-mono cursor-pointer hover:bg-white/5 transition-colors select-none">
                                <Code2 size={14} className="text-amber-400/80" />
                                <span>[Execution Trace]</span>
@@ -187,7 +223,7 @@ export default function Workspace() {
                 </MessageScrollerItem>
               ))}
 
-              {/* TYPING INDICATOR BUBBLE */}
+              {/* TYPING INDICATOR */}
               {isLoading && (
                 <MessageScrollerItem 
                   messageId="loading" 
@@ -215,14 +251,13 @@ export default function Workspace() {
                   </div>
                 </MessageScrollerItem>
               )}
-
               <div ref={messagesEndRef} className="h-1 w-full" />
             </div>
           )}
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {/* INPUT AREA: Unified Flex Wrapper for centered button alignment */}
+      {/* INPUT AREA */}
       <div className="flex-none w-full p-4 md:px-6 md:pb-6 bg-zinc-950 z-20">
         <div className="max-w-4xl mx-auto">
           <form onSubmit={handleSubmit} className="relative group">

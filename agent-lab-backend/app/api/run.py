@@ -4,27 +4,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Any, Optional, Dict
 from app.experiments.langchain_v1.agent import run_langchain_agent
+from app.models.langchain_v1.schema import RunRequest, RunResponse, Step
 
 router = APIRouter()
-
-class RunRequest(BaseModel):
-    experiment_id: str
-    query: str
-    session_id: str = "default-session"
-
-class Step(BaseModel):
-    step_number: int
-    type: str 
-    title: str
-    content: Any
-
-class RunResponse(BaseModel):
-    experiment_id: str
-    query: str
-    final_answer: str
-    steps: List[Step]
-    latency_ms: float
-    telemetry: Optional[Dict[str, int]] = None
 
 @router.post("/runs", response_model=RunResponse)
 async def execute_run(req: RunRequest):
@@ -38,7 +20,7 @@ async def execute_run(req: RunRequest):
     
     try:
         # 1. Execute Agent
-        state = await run_langchain_agent(user_query=req.query, session_id=req.session_id)
+        state = await run_langchain_agent(user_query=req.query, session_id=req.session_id, use_router=req.use_router)
         
         # 2. Safely extract messages
         messages = state.get("messages", [])
@@ -50,31 +32,39 @@ async def execute_run(req: RunRequest):
         final_answer = ""
         step_counter = 1
 
+        # 1. Extract the final text response from the AIMessage
+        for msg in messages:
+            if msg.__class__.__name__ == "AIMessage" and not getattr(msg, "tool_calls", None):
+                content = getattr(msg, "content", "")
+                if isinstance(content, list):
+                    final_answer = "".join(item.get("text", "") for item in content if isinstance(item, dict))
+                else:
+                    final_answer = str(content)
+
+        # 2. Extract explicit router steps (Fast Path)
+        explicit_steps = state.get("steps", [])
+        if explicit_steps:
+            for es in explicit_steps:
+                steps.append(Step(
+                    step_number=step_counter,
+                    type=es.get("type", "tool_call"),
+                    title=es.get("title", "Trace"),
+                    content=es.get("content", {})
+                ))
+                step_counter += 1
+
+        # 3. Extract LangChain agent loop steps (Heavy Path)
         for msg in messages:
             msg_type = msg.__class__.__name__
-
-            if msg_type == "HumanMessage":
-                continue
-
-            elif msg_type == "AIMessage":
-                if getattr(msg, "tool_calls", None):
-                    for tc in msg.tool_calls:
-                        steps.append(Step(
-                            step_number=step_counter,
-                            type="tool_call",
-                            title=f"Tool Call: {tc.get('name', 'unknown')}",
-                            content=tc.get("args", {})
-                        ))
-                        step_counter += 1
-                else:
-                    content = getattr(msg, "content", "")
-                    if isinstance(content, list):
-                        final_answer = "".join(
-                            item.get("text", "") for item in content if isinstance(item, dict)
-                        )
-                    else:
-                        final_answer = str(content)
-
+            if msg_type == "AIMessage" and getattr(msg, "tool_calls", None):
+                for tc in msg.tool_calls:
+                    steps.append(Step(
+                        step_number=step_counter,
+                        type="tool_call",
+                        title=f"Tool Call: {tc.get('name', 'unknown')}",
+                        content=tc.get("args", {})
+                    ))
+                    step_counter += 1
             elif msg_type == "ToolMessage":
                 steps.append(Step(
                     step_number=step_counter,
@@ -94,12 +84,5 @@ async def execute_run(req: RunRequest):
         )
 
     except Exception as e:
-        # Print the full stack trace to your backend terminal for easy debugging
         traceback.print_exc()
-        
-        # Format the error cleanly for the frontend
-        error_msg = str(e)
-        if isinstance(e, KeyError):
-            error_msg = f"Missing expected key in agent state: {e}"
-            
-        raise HTTPException(status_code=500, detail=error_msg)
+        raise HTTPException(status_code=500, detail=str(e))

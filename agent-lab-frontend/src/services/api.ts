@@ -1,20 +1,32 @@
 import type { RunResult } from "../features/workspace/types";
 
-const API_BASE = "http://localhost:8000/api";
+const API_BASE_URL = "http://localhost:8000/api";
 
 export const AgentAPI = {
-  executeRun: async (experimentId: string, query: string): Promise<RunResult> => {
-    const response = await fetch(`${API_BASE}/runs`, {
+  async executeRun(
+    experimentId: string,
+    query: string,
+    sessionId: string = "default-session",
+    useRouter: boolean = true
+  ): Promise<RunResult> {
+    const response = await fetch(`${API_BASE_URL}/runs`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ experiment_id: experimentId, query }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        experiment_id: experimentId,
+        query: query,
+        session_id: sessionId,
+        use_router: useRouter,
+      }),
     });
 
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Run failed");
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Server error: ${response.status}`);
     }
 
     return response.json();
-  }
+  },
 };
