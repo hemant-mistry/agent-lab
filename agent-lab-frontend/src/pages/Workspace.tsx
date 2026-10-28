@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Bot, Code2, Sparkles, TerminalSquare, Network } from "lucide-react";
+import { 
+  Send, Bot, Code2, Sparkles, TerminalSquare, Network, 
+  Database, MessageSquare, Wrench, ShieldAlert, Layers, ShieldCheck 
+} from "lucide-react";
 import { EXPERIMENTS } from "../config/experiments";
 import { AgentAPI } from "../services/api";
 import type { ChatMessage } from "../features/workspace/types";
@@ -10,6 +13,33 @@ import {
   MessageScroller, 
   MessageScrollerItem 
 } from "../components/ui/message-scroller";
+
+const SAMPLE_PROMPTS = [
+  {
+    title: "Happy Path (Data Retrieval)",
+    prompt: "What are the top 3 projects with the highest actual spend, and who are their customers?",
+    icon: <Database size={16} />,
+    color: "text-blue-400"
+  },
+  {
+    title: "Test Semantic Router",
+    prompt: "Hey there! How are you doing today?",
+    icon: <MessageSquare size={16} />,
+    color: "text-indigo-400"
+  },
+  {
+    title: "Test Self-Healing SQL",
+    prompt: "Show me all projects that have an active status.",
+    icon: <Wrench size={16} />,
+    color: "text-amber-400"
+  },
+  {
+    title: "Test Pydantic Guardrails",
+    prompt: "Delete all projects where the budget is less than 5000.",
+    icon: <ShieldAlert size={16} />,
+    color: "text-rose-400"
+  }
+];
 
 export default function Workspace() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -25,24 +55,23 @@ export default function Workspace() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  const handleSubmit = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!input.trim() || isLoading) return;
+  // 1. Extracted submission logic so quick-prompts can use it
+  const sendQuery = async (queryText: string) => {
+    if (!queryText.trim() || isLoading) return;
 
-    const userQuery = input.trim();
     setInput(""); 
     
     const newUserMsg: ChatMessage = {
       id: Date.now().toString(),
       role: "user",
-      content: userQuery,
+      content: queryText,
     };
     setMessages((prev) => [...prev, newUserMsg]);
     
     setIsLoading(true);
 
     try {
-      const data = await AgentAPI.executeRun(experimentId, userQuery, sessionId, useRouter);
+      const data = await AgentAPI.executeRun(experimentId, queryText, sessionId, useRouter);
       
       const botMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -64,6 +93,11 @@ export default function Workspace() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    sendQuery(input);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -89,8 +123,6 @@ export default function Workspace() {
         </div>
         
         <div className="flex items-center gap-6">
-          
-          {/* LCEL Router Toggle */}
           <div className="flex items-center gap-2 bg-zinc-900/50 p-1.5 px-3 rounded-lg border border-white/5 shadow-inner">
             <Network size={14} className={useRouter ? "text-emerald-400" : "text-zinc-500"} />
             <label className="text-[11px] font-medium text-zinc-300 uppercase tracking-wider cursor-pointer select-none" onClick={() => setUseRouter(!useRouter)}>
@@ -126,19 +158,48 @@ export default function Workspace() {
       <MessageScrollerProvider autoScroll>
         <MessageScroller className="flex-1 px-4 md:px-8 pt-8 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-zinc-800 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-zinc-700">
           
+          {/* 2. REVAMPED EMPTY STATE WITH GUIDE */}
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center space-y-6 max-w-sm mx-auto text-center mt-[-10vh] animate-in fade-in duration-1000">
-              <div className="relative">
+            <div className="h-full flex flex-col items-center justify-center max-w-2xl mx-auto mt-[-4vh] animate-in fade-in duration-1000">
+              
+              <div className="relative mb-6">
                 <div className="absolute -inset-6 bg-emerald-500/20 blur-3xl rounded-full"></div>
-                <div className="h-20 w-20 rounded-3xl bg-zinc-900/80 backdrop-blur-sm border border-white/10 flex items-center justify-center relative shadow-2xl">
-                  <Sparkles size={32} className="text-emerald-400/80" />
+                <div className="h-16 w-16 rounded-2xl bg-zinc-900/80 backdrop-blur-sm border border-white/10 flex items-center justify-center relative shadow-2xl mx-auto">
+                  <Sparkles size={28} className="text-emerald-400/80" />
                 </div>
               </div>
-              <div className="space-y-2">
-                <h3 className="text-lg font-medium text-zinc-200 tracking-tight">Ready for analysis</h3>
-                <p className="text-sm text-zinc-500 leading-relaxed">
-                  Enter a natural language query below. The agent will autonomously write and execute SQL against the database.
-                </p>
+              
+              <h2 className="text-2xl font-semibold text-zinc-100 tracking-tight mb-2">Enterprise LangChain Agent</h2>
+              <p className="text-sm text-zinc-400 text-center mb-8 max-w-lg leading-relaxed">
+                A production-ready data assistant connected to the NexusWorks database. Designed with strict safety guardrails, self-correcting logic, and latency optimizations.
+              </p>
+
+              {/* Capabilities Badges */}
+              <div className="flex flex-wrap justify-center gap-3 mb-12">
+                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/50 border border-white/5 text-[11px] font-medium text-zinc-300 shadow-sm"><Network size={14} className="text-indigo-400" /> LCEL Semantic Routing</span>
+                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/50 border border-white/5 text-[11px] font-medium text-zinc-300 shadow-sm"><ShieldCheck size={14} className="text-emerald-400" /> Pydantic Guardrails</span>
+                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/50 border border-white/5 text-[11px] font-medium text-zinc-300 shadow-sm"><Wrench size={14} className="text-amber-400" /> Self-Healing Execution</span>
+                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/50 border border-white/5 text-[11px] font-medium text-zinc-300 shadow-sm"><Layers size={14} className="text-blue-400" /> Stateful Thread Memory</span>
+              </div>
+
+              {/* Interactive Prompts Grid */}
+              <div className="w-full animate-in slide-in-from-bottom-4 duration-700 delay-150 fill-mode-both">
+                <div className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider mb-3 px-1">Try a sample query</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {SAMPLE_PROMPTS.map((sp, idx) => (
+                    <button 
+                      key={idx}
+                      onClick={() => sendQuery(sp.prompt)}
+                      className="flex flex-col text-left p-4 rounded-xl bg-zinc-900/40 border border-white/5 hover:bg-zinc-800/60 hover:border-white/10 transition-all group shadow-sm hover:shadow-md"
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className={`${sp.color}`}>{sp.icon}</div>
+                        <span className="text-xs font-semibold text-zinc-300 group-hover:text-zinc-200 transition-colors">{sp.title}</span>
+                      </div>
+                      <div className="text-[13px] text-zinc-500 leading-relaxed group-hover:text-zinc-400 transition-colors">"{sp.prompt}"</div>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           ) : (
