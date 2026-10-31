@@ -26,16 +26,23 @@ class SQLTool(Tool):
         # Clean trailing whitespace and semicolons
         query = query.strip().rstrip(";").strip()
 
-        if not query.lower().startswith("select"):
-            return "Error: Only SELECT queries are allowed."
+        is_select = query.lower().startswith("select")
 
         try:
-            result = (
-                supabase_service.client
-                .rpc("execute_readonly_query", {"query_text": query})
-                .execute()
-            )
-            return json.dumps(result.data)
+            if is_select:
+                result = (
+                    supabase_service.client
+                    .rpc("execute_readonly_query", {"query_text": query})
+                    .execute()
+                )
+                return json.dumps(result.data) if result.data is not None else "[]"
+            else:
+                result = (
+                    supabase_service.client
+                    .rpc("execute_sql", {"query_text": query})
+                    .execute()
+                )
+                return f"Success: Mutation query executed successfully. Affected rows/data: {json.dumps(result.data)}"
         except Exception as e:
-            # Return the error as text so the agent can self-correct its SQL
-            return f"SQL Execution Error: {str(e)}. Please call get_schema to verify exact table and column names, then try again."
+            
+            return f"SQL Execution Error: {str(e)}. Please check the database function or schema."

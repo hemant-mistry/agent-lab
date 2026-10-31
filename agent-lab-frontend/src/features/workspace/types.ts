@@ -20,6 +20,7 @@ export interface RunResult {
   steps: Step[];
   latency_ms: number;
   telemetry?: Telemetry;
+  requires_approval?:boolean;
 }
 
 export interface ChatMessage {
@@ -29,4 +30,5 @@ export interface ChatMessage {
   steps?: Step[];
   latency_ms?: number;
   telemetry?: Telemetry; 
+  requires_approval?:boolean;
 }

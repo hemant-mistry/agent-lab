@@ -29,4 +29,29 @@ export const AgentAPI = {
 
     return response.json();
   },
+
+  async resumeRun(
+    experimentId: string,
+    sessionId: string,
+    action: "approve" | "reject"
+  ): Promise<RunResult> {
+    const response = await fetch(`${API_BASE_URL}/runs/resume`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        experiment_id: experimentId,
+        session_id: sessionId,
+        action: action,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Server error: ${response.status}`);
+    }
+
+    return response.json();
+  },
 };
