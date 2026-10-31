@@ -65,3 +65,9 @@ class RouteQuery(BaseModel):
     reasoning: str = Field(
         description="Brief 1-sentence explanation for why this intent was chosen."
     )
+
+
+class RouteDecision(BaseModel):
+    next_node: Literal["sql_agent", "general_agent", "FINISH"] = Field(
+        description="Route to 'sql_agent' for database queries, 'general_agent' for standard chat/greetings, or 'FINISH' if the user's request is completely fulfilled."
+    )

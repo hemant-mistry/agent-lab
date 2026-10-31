@@ -57,6 +57,7 @@ export default function Workspace() {
   const [input, setInput] = useState("")
   const [experimentId, setExperimentId] = useState(EXPERIMENTS[0]?.id || "")
   const [isLoading, setIsLoading] = useState(false)
+  const [statusMessage, setStatusMessage] = useState("") // Added state for streaming status
   const [useRouter, setUseRouter] = useState(true)
   const [sessionId] = useState(() => `session-${Date.now()}`)
 
@@ -64,7 +65,7 @@ export default function Workspace() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages, isLoading])
+  }, [messages, isLoading, statusMessage])
 
   const sendQuery = async (queryText: string) => {
     if (!queryText.trim() || isLoading) return
@@ -79,13 +80,17 @@ export default function Workspace() {
     setMessages((prev) => [...prev, newUserMsg])
 
     setIsLoading(true)
+    setStatusMessage("Connecting to AgentLab...") // Initial stream state
 
     try {
       const data = await AgentAPI.executeRun(
         experimentId,
         queryText,
         sessionId,
-        useRouter
+        useRouter,
+        (statusUpdate) => {
+          setStatusMessage(statusUpdate) // Update UI as nodes execute
+        }
       )
 
       // Fallback check to ensure approval flag catches text warnings even if boolean is missing
@@ -114,6 +119,7 @@ export default function Workspace() {
       setMessages((prev) => [...prev, errorMsg])
     } finally {
       setIsLoading(false)
+      setStatusMessage("") // Clear status when done
     }
   }
 
@@ -137,6 +143,7 @@ export default function Workspace() {
     }
     setMessages((prev) => [...prev, newUserMsg])
     setIsLoading(true)
+    setStatusMessage(`Executing ${action} action...`)
 
     try {
       const data = await AgentAPI.resumeRun(experimentId, sessionId, action)
@@ -157,6 +164,7 @@ export default function Workspace() {
       ])
     } finally {
       setIsLoading(false)
+      setStatusMessage("")
     }
   }
 
@@ -334,7 +342,7 @@ export default function Workspace() {
                           {msg.content}
                         </div>
 
-                        {/* HITL APPROVAL BUTTONS (Explicitly bound and verified) */}
+                        {/* HITL APPROVAL BUTTONS */}
                         {Boolean(msg.requires_approval) && (
                           <div className="mt-3 ml-10 rounded-xl border border-amber-500/30 bg-zinc-900/80 p-4 shadow-lg">
                             <p className="mb-3 text-xs text-zinc-400">
@@ -423,7 +431,7 @@ export default function Workspace() {
                 </MessageScrollerItem>
               ))}
 
-              {/* TYPING INDICATOR */}
+              {/* DYNAMIC STREAMING STATUS INDICATOR */}
               {isLoading && (
                 <MessageScrollerItem
                   messageId="loading"
@@ -441,20 +449,31 @@ export default function Workspace() {
                         </span>
                       </div>
                       <div className="ml-10 w-fit rounded-2xl rounded-tl-sm border border-white/5 bg-zinc-900/50 px-4 py-3 shadow-sm">
-                        <div className="flex h-3 items-center gap-1.5">
-                          <span
-                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500"
-                            style={{ animationDelay: "0ms" }}
-                          ></span>
-                          <span
-                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500"
-                            style={{ animationDelay: "150ms" }}
-                          ></span>
-                          <span
-                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500"
-                            style={{ animationDelay: "300ms" }}
-                          ></span>
-                        </div>
+                        
+                        {/* Show real-time backend updates or fallback to animated dots */}
+                        {statusMessage ? (
+                          <div className="flex items-center gap-2.5">
+                            <Sparkles size={14} className="animate-pulse text-emerald-400" />
+                            <span className="text-[13px] font-medium italic tracking-wide text-zinc-400">
+                              {statusMessage}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex h-3 items-center gap-1.5">
+                            <span
+                              className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500"
+                              style={{ animationDelay: "0ms" }}
+                            ></span>
+                            <span
+                              className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500"
+                              style={{ animationDelay: "150ms" }}
+                            ></span>
+                            <span
+                              className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500"
+                              style={{ animationDelay: "300ms" }}
+                            ></span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

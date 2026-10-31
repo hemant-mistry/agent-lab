@@ -6,8 +6,9 @@ import asyncio
 
 app = FastAPI(title="AgentLab Platform API")
 
-if sys.platform.startswith('win'):
+if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# ==========================================================
 
 # Enable CORS for Vite dev server
 app.add_middleware(

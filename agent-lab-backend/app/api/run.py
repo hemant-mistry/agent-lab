@@ -4,9 +4,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Any, Optional, Dict
 from app.experiments.langchain_v1.agent import run_langchain_agent
-from app.experiments.langgraph_v1.agent import run_langgraph_agent, resume_langgraph_agent
+from app.experiments.langgraph_v1.agent import run_langgraph_agent, resume_langgraph_agent, stream_langgraph_agent
+from fastapi.responses import StreamingResponse
 from app.models.langchain_v1.schema import RunRequest, RunResponse, Step
 from app.models.langgraph_v1.schema import ResumeRequest
+from app.core.checkpointer import get_postgres_checkpointer
 
 router = APIRouter()
 
@@ -67,7 +69,17 @@ async def execute_run(req: RunRequest):
     start_time = time.time()
     try:
         if req.experiment_id == "langgraph-v1":
-            state = await run_langgraph_agent(req.query, req.session_id)
+        
+            # Create an async generator for Server-Sent Events (SSE)
+            async def event_generator():
+                async with get_postgres_checkpointer() as memory:
+                    # Yield chunks directly from the LangGraph streaming function
+                    async for chunk in stream_langgraph_agent(req.query, req.session_id, memory):
+                        yield chunk
+                        
+            # Return the stream with the standard SSE media type
+            return StreamingResponse(event_generator(), media_type="text/event-stream")
+    
         else:
             state = await run_langchain_agent(
                 req.query, req.session_id, req.use_router
@@ -86,7 +98,10 @@ async def execute_resume(req: ResumeRequest):
                 status_code=400,
                 detail="Only LangGraph supports state resumption.",
             )
-        state = await resume_langgraph_agent(req.session_id, req.action)
+        
+        async with get_postgres_checkpointer() as memory:
+            state = await resume_langgraph_agent(req.session_id, req.action, memory)
+
         return format_run_response(
             req.experiment_id,
             f"Human Action: {req.action.upper()}",
