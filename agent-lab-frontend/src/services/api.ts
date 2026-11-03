@@ -28,6 +28,16 @@ export const AgentAPI = {
       throw new Error(errorData.detail || `Server error: ${response.status}`);
     }
 
+    // 1. Check if the backend is sending a stream or standard JSON
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!contentType.includes("text/event-stream")) {
+      // 2. Standard JSON Fallback (for LCEL)
+      if (onStatus) onStatus("Executing LCEL Pipeline...");
+      return await response.json();
+    }
+
+    // 3. SSE Streaming Logic (for LangGraph)
     const reader = response.body?.getReader();
     if (!reader) {
       throw new Error("Streaming is not supported by your browser.");
@@ -35,7 +45,7 @@ export const AgentAPI = {
 
     const decoder = new TextDecoder("utf-8");
     let finalResult: RunResult | null = null;
-    let buffer = ""; // Buffer to handle chunks that get split across TCP packets
+    let buffer = ""; 
 
     while (true) {
       const { done, value } = await reader.read();
@@ -44,7 +54,6 @@ export const AgentAPI = {
       buffer += decoder.decode(value, { stream: true });
       const chunks = buffer.split("\n\n");
       
-      // Pop the last element (which might be an incomplete JSON string) back into the buffer
       buffer = chunks.pop() || "";
 
       for (const chunk of chunks) {
@@ -58,7 +67,7 @@ export const AgentAPI = {
           try {
             const payload = JSON.parse(dataStr);
             if (payload.type === "status" && onStatus) {
-              onStatus(payload.message); // Trigger React state update
+              onStatus(payload.message); 
             } else if (payload.type === "result") {
               finalResult = payload.data;
             }

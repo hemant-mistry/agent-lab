@@ -57,7 +57,7 @@ export default function Workspace() {
   const [input, setInput] = useState("")
   const [experimentId, setExperimentId] = useState(EXPERIMENTS[0]?.id || "")
   const [isLoading, setIsLoading] = useState(false)
-  const [statusMessage, setStatusMessage] = useState("") // Added state for streaming status
+  const [statusMessage, setStatusMessage] = useState("")
   const [useRouter, setUseRouter] = useState(true)
   const [sessionId] = useState(() => `session-${Date.now()}`)
 
@@ -80,7 +80,7 @@ export default function Workspace() {
     setMessages((prev) => [...prev, newUserMsg])
 
     setIsLoading(true)
-    setStatusMessage("Connecting to AgentLab...") // Initial stream state
+    setStatusMessage("Connecting to AgentLab...")
 
     try {
       const data = await AgentAPI.executeRun(
@@ -89,20 +89,22 @@ export default function Workspace() {
         sessionId,
         useRouter,
         (statusUpdate) => {
-          setStatusMessage(statusUpdate) // Update UI as nodes execute
+          setStatusMessage(statusUpdate)
         }
       )
-
+      console.log("RAW BACKEND PAYLOAD:", data);
       // Fallback check to ensure approval flag catches text warnings even if boolean is missing
       const requiresApprovalFlag = Boolean(
         data.requires_approval ||
-        data.final_answer?.includes("Human Approval Required")
+        data.final_answer?.includes("Human Approval Required") ||
+        data.result?.includes("Human Approval Required") ||
+        data.output?.includes("Human Approval Required")
       )
 
       const botMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: data.final_answer,
+        content: data.final_answer || data.result || data.answer || data.content || data.output || "No response text received.",
         steps: data.steps,
         latency_ms: data.latency_ms,
         telemetry: data.telemetry,
@@ -119,7 +121,7 @@ export default function Workspace() {
       setMessages((prev) => [...prev, errorMsg])
     } finally {
       setIsLoading(false)
-      setStatusMessage("") // Clear status when done
+      setStatusMessage("")
     }
   }
 
@@ -129,7 +131,6 @@ export default function Workspace() {
   }
 
   const handleResume = async (action: "approve" | "reject") => {
-    // Hide buttons immediately upon click
     setMessages((prev) =>
       prev.map((m) =>
         m.requires_approval ? { ...m, requires_approval: false } : m
@@ -150,7 +151,7 @@ export default function Workspace() {
       const botMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
-        content: data.final_answer,
+        content: data.final_answer || data.result || data.answer || data.content || data.output || "No response text received.",
         steps: data.steps,
         latency_ms: data.latency_ms,
         telemetry: data.telemetry,

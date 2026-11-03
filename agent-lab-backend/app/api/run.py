@@ -51,10 +51,19 @@ def format_run_response(experiment_id: str, query: str, state: dict, start_time:
             ))
             step_counter += 1
 
+    # --- THE FIX IS HERE ---
+    # Extract the actual text from the last AI Message
+    extracted_answer = state.get("final_answer", "")
+    if not extracted_answer and messages:
+        last_msg = messages[-1]
+        if last_msg.__class__.__name__ == "AIMessage":
+            extracted_answer = getattr(last_msg, "content", "")
+    # -----------------------
+
     return RunResponse(
         experiment_id=experiment_id,
         query=query,
-        final_answer=state.get("final_answer", ""),
+        final_answer=extracted_answer, # Pass the extracted text here
         steps=steps,
         latency_ms=round((time.time() - start_time) * 1000, 2),
         requires_approval=state.get("requires_approval", False),
